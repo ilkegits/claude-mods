@@ -32,7 +32,7 @@ import { colorAt, FADE_FRAME_MS, follow, isFading } from './fade'
 import { CROSS_MS, dwell, isSettling, layered, stack } from './motion'
 import type { Layer, Shown } from './motion'
 import type { Fade } from './fade'
-import { ago, appChats, chatRows, noteOf, seenOf, sharedOf } from './chats'
+import { ago, appChats, chatRows, modelWindows, noteOf, seenOf, sharedOf } from './chats'
 import type { ChatRow } from './chats'
 import { cutDiff, parseCounts, parseLog, parseNumstat, parseStatus, topOf } from './git'
 import {
@@ -118,6 +118,7 @@ let shareSoon: { cancel: () => void } | null = null
 let self: { id: string; dir: string } | null = null
 let lastShared = ''
 let appsAt = 0
+let usageAt = 0
 /** The app's record of each chat, read again only when its file changes. */
 let records: { dirs: string[] | null; byId: Record<string, { mtimeMs: number; seen: Seen | null }> } = { dirs: null, byId: {} }
 let pending: { cancel: () => void } | null = null
@@ -166,6 +167,7 @@ export const register: Register = on => {
     // The other chats: who this chat is (apart from boot, so a failed step there costs nothing
     // here), then read now and every few seconds.
     await knowSelf($)
+    usageAt = 0
     void lookAround($)
     lookTimer?.cancel()
     lookTimer = $.clock.every(5000, () => void lookAround($))
@@ -201,6 +203,7 @@ export const register: Register = on => {
         plan: l.plan ?? [],
         asking: l.asking ?? null,
         vitals: l.vitals,
+        planModels: l.planModels ?? [],
         cwd: l.cwd,
         repos: l.repos.map(r => ({ root: r.root, files: r.files.length, commits: r.commits.length, ahead: r.ahead })),
         steps: l.steps.length,
@@ -451,7 +454,7 @@ export const register: Register = on => {
         </Box>
 
         {/* ---------------- Vitals */}
-        {l.vitals && Svg ? <Svg key="vitals" source={rings(l.vitals, WIDE)} width={WIDE} height={RINGS_H} alt={vitalsAlt(l)} /> : null}
+        {l.vitals && Svg ? <Svg key="vitals" source={rings(l.vitals, WIDE, l.planModels)} width={WIDE} height={RINGS_H} alt={vitalsAlt(l)} /> : null}
 
         {/* ---------------- This chat */}
         {all.length ? (
@@ -782,7 +785,7 @@ function requestCard($: EngineInterface, s: Story, v: View, files: Map<string, F
 function vitalsAlt(l: Ledger): string {
   const v = l.vitals
   if (!v) return ''
-  return `Context ${short(v.tokens)} of ${short(v.compactAt)}; ${v.limits.map(x => `${x.kind} ${x.percentUsed}%`).join(', ')}`
+  return `Context ${short(v.tokens)} of ${short(v.compactAt)}; ${[...v.limits, ...(l.planModels ?? [])].map(x => `${x.kind} ${x.percentUsed}%`).join(', ')}`
 }
 
 function planAlt(plan: PlanItem[]): string {
@@ -1412,6 +1415,22 @@ async function share($: EngineInterface) {
   }
 }
 
+/**
+ * The plan's per-model weekly windows (Fable), which only the desktop app reports: the engine's
+ * own readings stop at the 5-hour and all-models windows. Kept as they were when a read fails.
+ */
+async function planModels($: EngineInterface) {
+  try {
+    const r = await $.mcp.call('ccd_session_mgmt', 'get_usage', {})
+    if (r.isError) return
+    const models = modelWindows(r.content.map(c => ('text' in c ? String(c.text) : '')).join(''))
+    const l = await read($, ledger)
+    if (JSON.stringify(models) !== JSON.stringify(l.planModels ?? [])) await safely($, x => ({ ...x, planModels: models }))
+  } catch (err) {
+    lastError = `planModels: ${String(err)}`
+  }
+}
+
 /** Reads the other maps' notes, and the app's list of chats now and then; redraws only on a change. */
 async function lookAround($: EngineInterface) {
   if (!self) return
@@ -1423,6 +1442,10 @@ async function lookAround($: EngineInterface) {
       appsAt = now
       const r = await $.mcp.call('ccd_session_mgmt', 'list_sessions', { limit: 30 })
       if (!r.isError) apps = appChats(r.content.map(c => ('text' in c ? String(c.text) : '')).join(''))
+    }
+    if (now - usageAt > 60_000) {
+      usageAt = now
+      void planModels($)
     }
     const notes: Shared[] = []
     const entries = await $.fs.list(self.dir).catch(() => [])

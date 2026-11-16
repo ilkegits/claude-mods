@@ -160,15 +160,22 @@ const FONT = `font-family="system-ui, -apple-system, 'Segoe UI', Inter, sans-ser
 
 export const RINGS_H = 106
 
-/** Context and the two plan windows as rings, each with what it means under it. */
-export function rings(v: Vitals, width: number): string {
+/** Context, the two plan windows and any per-model weekly window (Fable) as rings, each with what it means under it. */
+export function rings(v: Vitals, width: number, models: Limit[] = []): string {
   const ctxPct = v.compactAt ? Math.min(100, Math.round((v.tokens / v.compactAt) * 100)) : 0
   const items: { label: string; pct: number; sub: string }[] = [{ label: 'Context', pct: ctxPct, sub: `${short(v.tokens)} of ${short(v.compactAt)}` }]
   for (const kind of ['five_hour', 'seven_day']) {
     const l = v.limits.find(x => x.kind === kind)
     if (l) items.push({ label: kind === 'five_hour' ? '5 hours' : 'Week', pct: Math.round(l.percentUsed), sub: resets(l) })
   }
+  // Four rings fit the narrowest pane; a fifth would crowd the reset times.
+  for (const l of models.slice(0, Math.max(0, 4 - items.length))) {
+    items.push({ label: `${l.kind} week`, pct: Math.round(l.percentUsed), sub: resets(l) })
+  }
   const col = width / items.length
+  // Narrow columns: "Thu 21:00" for "resets Thu 21:00", and the model's name alone for "Fable week".
+  if (col < 92) for (const it of items) it.sub = it.sub.replace(/^resets /, '')
+  if (col < 80) for (const it of items) it.label = it.label.replace(/ week$/, '')
   const r = 27
   const C = 2 * Math.PI * r
   const parts = items.map((it, i) => {

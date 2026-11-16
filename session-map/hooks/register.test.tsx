@@ -3,7 +3,7 @@ import { expect, test } from 'claude-code/testing'
 import { barHeight, glyph, mark, metaLine, pulse, railNode, rings, track } from './art'
 import { colorAt, ease, FADE_MS, follow, isFading, mix } from './fade'
 import { dwell, DWELL_MS, layered, LAYER_MS, stack } from './motion'
-import { appChats, chatRows, cleanTitle, isUnseen, noteOf, seenOf } from './chats'
+import { appChats, chatRows, cleanTitle, isUnseen, modelWindows, noteOf, seenOf } from './chats'
 import { cutDiff, parseCounts, parseLog, parseStatus } from './git'
 import { applyPlan, bgAfterPrompt, heldLive, HOLD_MS, bgFromStop, bgStarted, changeGroups, clip, diffRows, EMPTY, fileRows, lineOf, newTurn, saidOf, place, prStatusOf, prWords, promptText, settle, stories } from './model'
 
@@ -283,6 +283,44 @@ test('drawings are well-formed SVG', () => {
   expect(rings({ tokens: 134_000, compactAt: 400_000, isCompactPoint: true, limits: [{ kind: 'five_hour', percentUsed: 23, resetsAt: null }] }, 300)).toContain('34%')
   const t = track([{ text: 'a', status: 'completed' }, { text: 'b', status: 'in_progress' }, { text: 'c', status: 'pending' }], 300, '#fff')
   expect((t.match(/<rect/g) ?? []).length).toBe(3)
+})
+
+test('the Fable weekly window gets its own ring, read from the app', () => {
+  const answer = JSON.stringify({
+    plan: {
+      status: 'ok',
+      windows: [
+        { label: '5-hour limit', percentUsed: 40, resetsAt: '2026-11-16T22:20:00.329Z' },
+        { label: 'Weekly · all models', percentUsed: 57, resetsAt: '2026-11-19T20:00:00.329Z' },
+        { label: 'Weekly · Fable', percentUsed: 82, resetsAt: '2026-11-19T20:00:00.329Z' },
+      ],
+    },
+  })
+  const models = modelWindows(answer)
+  expect(models).toEqual([{ kind: 'Fable', percentUsed: 82, resetsAt: '2026-11-19T20:00:00.329Z' }])
+  expect(modelWindows('{"plan":{"status":"not_applicable"}}')).toEqual([])
+  expect(modelWindows('not json')).toEqual([])
+
+  const v = {
+    tokens: 134_000,
+    compactAt: 400_000,
+    isCompactPoint: true,
+    limits: [
+      { kind: 'five_hour', percentUsed: 40, resetsAt: null },
+      { kind: 'seven_day', percentUsed: 57, resetsAt: null },
+    ],
+  }
+  const svg = rings(v, 400, models)
+  expect(svg).toContain('Fable week')
+  expect(svg).toContain('82%')
+  expect((svg.match(/stroke-dasharray/g) ?? []).length).toBe(4)
+  // A narrow pane keeps the words apart: shorter reset times, then the model's name alone.
+  const narrow = rings({ ...v, limits: [{ kind: 'seven_day', percentUsed: 57, resetsAt: '2026-11-19T20:00:00Z' }, ...v.limits] }, 300, models)
+  expect(narrow).not.toContain('resets')
+  expect(narrow).not.toContain('Fable week')
+  expect(narrow).toContain('>Fable<')
+  // Never past four rings, however many model windows the plan has.
+  expect((rings(v, 400, [...models, { kind: 'Opus', percentUsed: 10, resetsAt: null }]).match(/stroke-dasharray/g) ?? []).length).toBe(4)
 })
 
 test('paths are grouped by the place you know them by', () => {
@@ -762,6 +800,46 @@ test('the board lists the other chats and opens one by its link', async ($, on) 
   await press(ui, 'chat:local_b')
   expect(opened.some(a => a[a.length - 1] === 'claude://claude.ai/epitaxy/local_b')).toBe(true)
   await ui.unmount()
+})
+
+test('the pane reads the Fable window from the app and draws its ring', async ($, on) => {
+  const now = Date.now()
+  on('mcp.call', (_: unknown, e: any) => {
+    const text =
+      e.tool === 'get_session'
+        ? JSON.stringify({ sessionId: 'local_me' })
+        : e.tool === 'get_usage'
+          ? JSON.stringify({ plan: { status: 'ok', windows: [{ label: 'Weekly · Fable', percentUsed: 82, resetsAt: '2026-11-19T20:00:00Z' }] } })
+          : JSON.stringify([{ sessionId: 'local_me', title: 'Me', lastActivityAt: new Date(now).toISOString() }])
+    return { value: { isError: false, content: [{ type: 'text', text }] } }
+  })
+  on('session.usage', () => ({
+    value: {
+      startedAt: now,
+      context: { tokens: 100_000, window: 400_000 },
+      rateLimits: [
+        { kind: 'five_hour', percentUsed: 40 },
+        { kind: 'seven_day', percentUsed: 57 },
+      ],
+    },
+  }))
+  on('session.cwd', () => ({ value: '/' }))
+  on('session.model', () => ({ value: 'claude-fable-5-2' }))
+  on('env.get', (_: unknown, e: any) => ({ value: e.name === 'HOME' ? '/home/t' : undefined }))
+  on('fs.list', () => ({ value: [] }))
+  on('fs.write', () => ({ value: undefined }))
+  engine(on)
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+  let source = ''
+  for (let i = 0; i < 50 && !source.includes('Fable week'); i++) {
+    const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+    source = ((await ui.findAll({ type: 'Svg' })) as any[]).map(s => String(s.props?.source)).find(s => s.includes('Context')) ?? ''
+    await ui.unmount()
+    if (!source.includes('Fable week')) await new Promise(r => setTimeout(r, 10))
+  }
+  expect(source).toContain('Fable week')
+  expect(source).toContain('82%')
+  expect(source).toContain('57%')
 })
 
 test('a mood colour fades through OKLab, and a change mid-fade starts from what is shown', () => {

@@ -2,7 +2,7 @@
 // the others' notes against the app's own list of chats (titles and links). Pure functions here;
 // the reading and writing take `$` in register.tsx.
 
-import type { AppChat, Seen, Shared } from '../types'
+import type { AppChat, Limit, Seen, Shared } from '../types'
 
 export type { AppChat, Seen, Shared }
 import { clip, str } from './model'
@@ -50,6 +50,28 @@ export function appChats(json: string): AppChat[] {
       isRunning: r.isRunning === true,
     }))
     .filter(c => c.id)
+}
+
+/**
+ * The per-model weekly windows from the app's `get_usage` answer ("Weekly · Fable"), with the
+ * model as the kind. The engine's own readings carry only the 5-hour and all-models windows.
+ */
+export function modelWindows(json: string): Limit[] {
+  let r: unknown
+  try {
+    r = JSON.parse(json)
+  } catch {
+    return []
+  }
+  const plan = (r as { plan?: { status?: unknown; windows?: unknown } } | null)?.plan
+  if (!plan || plan.status !== 'ok' || !Array.isArray(plan.windows)) return []
+  const out: Limit[] = []
+  for (const w of plan.windows as Record<string, unknown>[]) {
+    const m = /^weekly\s*·\s*(.+)$/i.exec(str(w?.label).trim())
+    if (!m || /^all models$/i.test(m[1]!.trim()) || typeof w.percentUsed !== 'number') continue
+    out.push({ kind: m[1]!.trim(), percentUsed: w.percentUsed, resetsAt: str(w.resetsAt) || null })
+  }
+  return out
 }
 
 /** A chat's title without the markers other mods put in front of it (working-dot's 🟢). */

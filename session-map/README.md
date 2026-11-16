@@ -20,8 +20,9 @@ Top to bottom:
   you it says so ("Needs your answer", "Your call"); when a turn ends with work
   still running in the background it says what it waits on; when a request
   finishes, the first line of its own recap is the headline.
-- **Vitals**: rings for context before auto-compaction, the 5-hour limit and
-  the weekly limit, with reset times.
+- **Vitals**: rings for context before auto-compaction, the 5-hour limit,
+  the weekly limit and, in the desktop app, each per-model weekly limit
+  (such as Fable), with reset times.
 - **This chat**: the last four requests as a timeline (Show more opens the rest below, same size): a node per request (breathing
   while it runs, a tick when done, amber when it left you a question), one
   line of what you asked, how long Claude worked on it, and icons with counts
@@ -74,6 +75,8 @@ It makes no model calls and sends nothing anywhere else.
   - Files Claude edits, to find an edit's line number.
   - The app's list of chats (titles and links) and other chats' notes, for
     the Other chats board.
+  - The app's plan usage (`get_usage`) once a minute, for the per-model
+    weekly limits the chat's own readings do not carry.
   - Two times from the desktop app's own record of each listed chat (when you
     last opened or wrote in it, and when its last turn ended), to tell which
     finished chats you have not opened yet. These records live under

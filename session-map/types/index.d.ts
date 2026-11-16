@@ -114,6 +114,8 @@ export type Ledger = {
   turnEndedAt: number | null
   repos: Repo[]
   vitals: Vitals | null
+  /** The plan's per-model weekly windows (`kind` is the model, e.g. Fable), as the desktop app reports them. */
+  planModels?: Limit[]
   cwd: string
   model: string
   /** The task list, as the turn last set it. Optional: older ledgers lack it. */
